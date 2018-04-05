@@ -8,7 +8,6 @@ Makefile
 Makefile.in
 aclocal.m4
 compile
-config.*
 configure
 depcomp
 doc/libffi.info
@@ -34,3 +33,4 @@ libffi.xcodeproj/project.xcworkspace
 build_*/
 darwin_*/
 src/arm/trampoline.S
+**/texinfo.tex
