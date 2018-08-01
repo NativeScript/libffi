@@ -98,7 +98,7 @@ enum x86_64_reg_class
 
 #define SSE_CLASS_P(X)	((X) >= X86_64_SSE_CLASS && X <= X86_64_SSEUP_CLASS)
 
-/* A subroutine of is_vfp_type.Given a structure type,
+/* A subroutine of is_vfp_type. Given a structure type,
  return the type code of the first non - structure element.Recurse
  for structure elements.
  Return - 1
@@ -123,7 +123,7 @@ is_hfa0(const ffi_type* ty) {
   return ret;
 }
 
-/* A subroutine of is_vfp_type.  Given a structure type, return true if all
+/* A subroutine of is_vfp_type. Given a structure type, return true if all
  of the non-structure elements are the same as CANDIDATE.  */
 
 static int
@@ -147,14 +147,14 @@ is_hfa1(const ffi_type* ty, int candidate) {
 static size_t is_simd(const ffi_type* ty) // return 0 if no SIMD elements
 {
   if (ty->type == FFI_TYPE_EXT_VECTOR || ty->type == FFI_TYPE_COMPLEX) {
-    return ty  ->size;
+    return ty->size;
   }
-  ffi_type ** elements = ty ->elements;
+  ffi_type ** elements = ty->elements;
   int i;
 
   if (elements != NULL) {
     for (i = 0; elements[i]; ++i) {
-      int element_type = elements[i] ->type;
+      int element_type = elements[i]->type;
       if (element_type == FFI_TYPE_STRUCT || element_type == FFI_TYPE_COMPLEX || element_type == FFI_TYPE_EXT_VECTOR) {
         return is_simd(elements[i]);
       }
@@ -165,14 +165,14 @@ static size_t is_simd(const ffi_type* ty) // return 0 if no SIMD elements
 
 }
 
-int num_registers(ffi_cif* cif) {
+int num_registers(ffi_type* type) {
   int candidate;
   size_t size, ele_count, simd_size;
 
-  ffi_type** elements = cif->rtype->elements;
-  size = cif->rtype ->size;
-  candidate = cif->rtype ->elements[0] ->type;
-  simd_size = is_simd(cif ->rtype);
+  ffi_type** elements = type->elements;
+  size = type->size;
+  candidate = type->elements[0]->type;
+  simd_size = is_simd(type);
   if (candidate == FFI_TYPE_STRUCT || candidate == FFI_TYPE_COMPLEX || candidate == FFI_TYPE_EXT_VECTOR) {
     for (int i = 0;; ++i) {
       candidate = is_hfa0(elements[i]);
@@ -214,6 +214,7 @@ int num_registers(ffi_cif* cif) {
   }
 
   if (simd_size) {
+	/* Third element in double3 vectors is in ST0.  */
     if (candidate == FFI_TYPE_DOUBLE && ele_count == 3) {
       return 3;
     }
@@ -601,16 +602,19 @@ ffi_prep_cif_machdep (ffi_cif *cif)
 	    flags = sse0 ? UNIX64_RET_XMM64 : UNIX64_RET_INT64;
 	  else
 	    {
-	      _Bool sse1 = n == 2 && SSE_CLASS_P (classes[1]);
-	      if (sse0) {
-          int num_regs = num_registers(cif);
+	    _Bool sse1 = n == 2 && SSE_CLASS_P (classes[1]);
+	    if (sse0) {
+          int num_regs = num_registers(cif->rtype);
           if (num_regs == 1) {
             flags = UNIX64_RET_ST_XMM0;
           } else if (num_regs == 2) {
+			/* matrix_float2x2 needs all 128 bits of the registers */
             flags = rtype_size > 16 ? UNIX64_RET_ST_XMM0_XMM1_128 : UNIX64_RET_ST_XMM0_XMM1_64;
           } else if (num_regs == 3) {
+			/* third element in double3 vector is in ST0 */
             flags = UNIX64_RET_X86_ST0;
           } else if (sse1) {
+			/* if num_regs == 0 && sse0 && sse1 => we have a struct with size < 16 */
             flags = UNIX64_RET_ST_XMM0_XMM1_64;
           } else {
             flags = UNIX64_RET_ST_XMM0_RAX;
@@ -782,8 +786,8 @@ ffi_call_int (ffi_cif *cif, void (*fn)(void), void *rvalue,
 		      reg_args->gpr[gprcount] = 0;
 		      memcpy (&reg_args->gpr[gprcount], a, size);
 		    }
-		  gprcount++;
-		  break;
+		    gprcount++;
+		    break;
 		case X86_64_SSE_CLASS:
 		case X86_64_SSEUP_CLASS:
 		  if (size > 4) {
