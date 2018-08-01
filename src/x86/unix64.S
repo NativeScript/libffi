@@ -358,8 +358,7 @@ E(L(load_table), UNIX64_RET_ST_XMM0_XMM1_128)
 	movq	16(%rsi), %xmm1
 	jmp	L(l4)
 E(L(load_table), UNIX64_RET_ST_XMM0)
-	movdqu  (%rsi), %xmm0
-	ret
+	jmp	L(l4)
 E(L(load_table), UNIX64_RET_ST_RAX_RDX)
 	movq	8(%rsi), %rdx
     jmp    L(l2)
