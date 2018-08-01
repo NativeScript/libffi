@@ -72,6 +72,7 @@ AM_CONDITIONAL(TESTSUBDIR, test -d $srcdir/testsuite)
 
 TARGETDIR="unknown"
 HAVE_LONG_DOUBLE_VARIANT=0
+HAVE_EXT_VECTOR=0
 
 . ${srcdir}/configure.host
 
@@ -106,6 +107,7 @@ if test -z "$HAVE_LONG_DOUBLE"; then
 fi
 AC_SUBST(HAVE_LONG_DOUBLE)
 AC_SUBST(HAVE_LONG_DOUBLE_VARIANT)
+AC_SUBST(HAVE_EXT_VECTOR)
 
 AC_C_BIGENDIAN
 
@@ -202,6 +204,12 @@ case "$target" in
                  [Cannot use malloc on this target, so, we revert to
                    alternative means])
      ;;
+esac
+
+
+case "$target" in
+     aarch64-apple-darwin* | x86_64-apple-darwin*)
+       HAVE_EXT_VECTOR=1
 esac
 
 AM_CONDITIONAL(FFI_EXEC_TRAMPOLINE_TABLE, test x$FFI_EXEC_TRAMPOLINE_TABLE = x1)
@@ -348,7 +356,7 @@ AC_ARG_ENABLE(purify-safety,
 AC_ARG_ENABLE(multi-os-directory,
 [  --disable-multi-os-directory
                           disable use of gcc --print-multi-os-directory to change the library installation directory])
-                          
+
 # These variables are only ever used when we cross-build to X86_WIN32.
 # And we only support this with GCC, so...
 if test "x$GCC" = "xyes"; then
