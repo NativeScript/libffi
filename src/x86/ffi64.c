@@ -273,9 +273,8 @@ merge_classes (enum x86_64_reg_class class1, enum x86_64_reg_class class2, int b
       || class2 == X86_64_X87UP_CLASS
       || class2 == X86_64_COMPLEX_X87_CLASS)
     return X86_64_MEMORY_CLASS;
-
-  /* Rule #6: Otherwise class SSE is used.  */
-  return X86_64_SSE_CLASS;
+  
+  return byte_offset >= 8 ? X86_64_SSEUP_CLASS : X86_64_SSE_CLASS;
 }
 
 /* Classify the argument of type TYPE and mode MODE.
@@ -789,12 +788,18 @@ ffi_call_int (ffi_cif *cif, void (*fn)(void), void *rvalue,
 		    gprcount++;
 		    break;
 		case X86_64_SSE_CLASS:
+          if (size > 4) {
+            memcpy (&reg_args->sse[ssecount++].i128, a, sizeof(UINT64));
+          } else {
+            memcpy (&reg_args->sse[ssecount++].i32, a, sizeof(UINT32));
+          }
+          break;
 		case X86_64_SSEUP_CLASS:
-		  if (size > 4) {
-        memcpy (&reg_args->sse[ssecount++].i64, a, sizeof(UINT64));
-      } else {
-        memcpy (&reg_args->sse[ssecount++].i32, a, sizeof(UINT32));
-      }
+          if (j%2) {
+            memcpy (&reg_args->sse[ssecount-1].i128 + 1, a, sizeof(UINT64));
+          } else {
+            memcpy (&reg_args->sse[ssecount++].i128, a, sizeof(UINT64));
+          }
 		  break;
 		default:
 		  abort();
