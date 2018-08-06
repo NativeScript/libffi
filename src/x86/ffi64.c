@@ -789,14 +789,14 @@ ffi_call_int (ffi_cif *cif, void (*fn)(void), void *rvalue,
 		    break;
 		case X86_64_SSE_CLASS:
           if (size > 4) {
-            memcpy (&reg_args->sse[ssecount++].i128, a, sizeof(UINT64));
+            memcpy (&reg_args->sse[ssecount++].i64, a, sizeof(UINT64));
           } else {
             memcpy (&reg_args->sse[ssecount++].i32, a, sizeof(UINT32));
           }
           break;
 		case X86_64_SSEUP_CLASS:
           if (j%2) {
-            memcpy (&reg_args->sse[ssecount-1].i128 + 1, a, sizeof(UINT64));
+            memcpy (&reg_args->sse[ssecount-1].i64 + 1, a, sizeof(UINT64));
           } else {
             memcpy (&reg_args->sse[ssecount++].i128, a, sizeof(UINT64));
           }
