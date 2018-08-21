@@ -208,9 +208,10 @@ esac
 
 
 case "$target" in
-     aarch64-apple-darwin*)
+     aarch64-apple-darwin* | x86_64-apple-darwin*)
        HAVE_EXT_VECTOR=1
 esac
+
 AM_CONDITIONAL(FFI_EXEC_TRAMPOLINE_TABLE, test x$FFI_EXEC_TRAMPOLINE_TABLE = x1)
 AC_SUBST(FFI_EXEC_TRAMPOLINE_TABLE)
 
@@ -355,7 +356,7 @@ AC_ARG_ENABLE(purify-safety,
 AC_ARG_ENABLE(multi-os-directory,
 [  --disable-multi-os-directory
                           disable use of gcc --print-multi-os-directory to change the library installation directory])
-                          
+
 # These variables are only ever used when we cross-build to X86_WIN32.
 # And we only support this with GCC, so...
 if test "x$GCC" = "xyes"; then

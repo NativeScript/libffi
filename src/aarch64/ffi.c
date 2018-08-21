@@ -246,7 +246,8 @@ is_vfp_type (const ffi_type *ty)
     default:
       return 0;
     }
-  if ((ele_count > 4 && !simd_size) || (simd_size && ele_count > 16))
+  /* SIMD values bigger than 16 bytes are returned in memory as they cannot be packed in a single register */
+  if ((ele_count > 4 && !simd_size) || (simd_size && ele_count > 16) || simd_size > 16)
     return 0;
 
   /* Finally, make sure that all scalar elements are the same type.  */
