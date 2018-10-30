@@ -33,6 +33,7 @@
 #include <stdlib.h>
 #include <stdarg.h>
 #include <stdint.h>
+#include <stdbool.h>
 #include "internal64.h"
 
 #ifdef __x86_64__
@@ -287,7 +288,7 @@ merge_classes (enum x86_64_reg_class class1, enum x86_64_reg_class class2, int b
 */
 static size_t
 classify_argument (ffi_type *type, enum x86_64_reg_class classes[],
-		   size_t byte_offset, _Bool is_vector)
+		   size_t byte_offset, _Bool is_vector, _Bool is_ret)
 {
   switch (type->type)
     {
@@ -356,10 +357,15 @@ classify_argument (ffi_type *type, enum x86_64_reg_class classes[],
 	unsigned int i;
 	enum x86_64_reg_class subclasses[MAX_CLASSES];
 
-	/* If the struct is larger than 32 bytes, pass it on the stack.  */
+    /* If the struct is larger than 32 bytes, pass it on the stack.  */
 	if (type->size > 32)
 	  return 0;
-
+    
+    // Observation: simd_double3 arguments are passed on stack, while
+    // returned simd_double3 objects are in registers
+    if (type->size > 16 && !is_ret)
+        return 0;
+          
 	for (i = 0; i < words; i++)
 	  classes[i] = X86_64_NO_CLASS;
 
@@ -379,7 +385,7 @@ classify_argument (ffi_type *type, enum x86_64_reg_class classes[],
 
 	    byte_offset = FFI_ALIGN (byte_offset, (*ptr)->alignment);
 
-	    num = classify_argument (*ptr, subclasses, byte_offset % 8, is_vector);
+	    num = classify_argument (*ptr, subclasses, byte_offset % 8, is_vector, is_ret);
 	    if (num == 0)
 	      return 0;
 	    for (i = 0; i < num; i++)
@@ -476,13 +482,14 @@ classify_argument (ffi_type *type, enum x86_64_reg_class classes[],
 
 static size_t
 examine_argument (ffi_type *type, enum x86_64_reg_class classes[MAX_CLASSES],
-		  _Bool in_return, int *pngpr, int *pnsse, _Bool is_vector)
+		  _Bool in_return, int *pngpr, int *pnsse, _Bool is_ret)
 {
   size_t n;
   unsigned int i;
   int ngpr, nsse;
+  _Bool is_vector = type->type == FFI_TYPE_EXT_VECTOR;
 
-  n = classify_argument (type, classes, 0, is_vector);
+  n = classify_argument (type, classes, 0, is_vector, is_ret);
   if (n == 0)
     return 0;
 
@@ -582,7 +589,7 @@ ffi_prep_cif_machdep (ffi_cif *cif)
       break;
     case FFI_TYPE_STRUCT:
     case FFI_TYPE_EXT_VECTOR:
-      n = examine_argument (cif->rtype, classes, 1, &ngpr, &nsse, rtype->type == FFI_TYPE_EXT_VECTOR);
+      n = examine_argument (cif->rtype, classes, 1, &ngpr, &nsse, true);
       if (n == 0)
 	{
 	  /* The return value is passed in memory.  A pointer to that
@@ -665,7 +672,7 @@ ffi_prep_cif_machdep (ffi_cif *cif)
      not, add it's size to the stack byte count.  */
   for (bytes = 0, i = 0, avn = cif->nargs; i < avn; i++)
     {
-      if (examine_argument (cif->arg_types[i], classes, 0, &ngpr, &nsse, rtype->type == FFI_TYPE_EXT_VECTOR) == 0
+      if (examine_argument (cif->arg_types[i], classes, 0, &ngpr, &nsse, false) == 0
 	  || gprcount + ngpr > MAX_GPR_REGS
 	  || ssecount + nsse > MAX_SSE_REGS)
 	{
@@ -737,7 +744,7 @@ ffi_call_int (ffi_cif *cif, void (*fn)(void), void *rvalue,
     {
       size_t n, size = arg_types[i]->size;
 
-      n = examine_argument (arg_types[i], classes, 0, &ngpr, &nsse, cif->rtype->type == FFI_TYPE_EXT_VECTOR);
+      n = examine_argument (arg_types[i], classes, 0, &ngpr, &nsse, false);
       if (n == 0
 	  || gprcount + ngpr > MAX_GPR_REGS
 	  || ssecount + nsse > MAX_SSE_REGS)
@@ -933,7 +940,7 @@ ffi_closure_unix64_inner(ffi_cif *cif,
       enum x86_64_reg_class classes[MAX_CLASSES];
       size_t n;
 
-      n = examine_argument (arg_types[i], classes, 0, &ngpr, &nsse, cif->rtype == FFI_TYPE_EXT_VECTOR);
+      n = examine_argument (arg_types[i], classes, 0, &ngpr, &nsse, false);
       if (n == 0
 	  || gprcount + ngpr > MAX_GPR_REGS
 	  || ssecount + nsse > MAX_SSE_REGS)
