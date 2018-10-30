@@ -7,7 +7,6 @@
 # Most of the time we can define all the variables all at once...
 case "${host}" in
   aarch64*-*-*)
-  	HAVE_EXT_VECTOR=1
 	TARGET=AARCH64; TARGETDIR=aarch64
 	SOURCES="ffi.c sysv.S"
 	;;
@@ -94,7 +93,6 @@ case "${host}" in
 	;;
 
   i?86-*-darwin* | x86_64-*-darwin* | i?86-*-ios | x86_64-*-ios)
-    HAVE_EXT_VECTOR=1
 	TARGETDIR=x86
 	if test $ac_cv_sizeof_size_t = 4; then
 	  TARGET=X86_DARWIN
@@ -104,7 +102,6 @@ case "${host}" in
 	;;
 
   i?86-*-* | x86_64-*-* | amd64-*)
-    HAVE_EXT_VECTOR=1
 	TARGETDIR=x86
 	if test $ac_cv_sizeof_size_t = 4; then
 	  case "$host" in

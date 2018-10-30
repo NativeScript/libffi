@@ -208,7 +208,7 @@ esac
 
 
 case "$target" in
-     aarch64-apple-darwin* | x86_64-apple-darwin*)
+     aarch64-* | x86_64-*)
        HAVE_EXT_VECTOR=1
 esac
 
