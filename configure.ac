@@ -2,7 +2,7 @@ dnl Process this with autoconf to create configure
 
 AC_PREREQ(2.68)
 
-AC_INIT([libffi], [3.99999], [http://github.com/libffi/libffi/issues])
+AC_INIT([libffi], [3.3-rc0], [http://github.com/libffi/libffi/issues])
 AC_CONFIG_HEADERS([fficonfig.h])
 
 AC_CANONICAL_SYSTEM
@@ -301,7 +301,11 @@ AM_CONDITIONAL(BUILD_DOCS, [test x$enable_docs = xyes])
 AH_BOTTOM([
 #ifdef HAVE_HIDDEN_VISIBILITY_ATTRIBUTE
 #ifdef LIBFFI_ASM
+#ifdef __APPLE__
+#define FFI_HIDDEN(name) .private_extern name
+#else
 #define FFI_HIDDEN(name) .hidden name
+#endif
 #else
 #define FFI_HIDDEN __attribute__ ((visibility ("hidden")))
 #endif
@@ -362,11 +366,11 @@ AC_ARG_ENABLE(multi-os-directory,
 if test "x$GCC" = "xyes"; then
   if test -n "$with_cross_host" &&
      test x"$with_cross_host" != x"no"; then
-    toolexecdir="${exec_prefix}"/'$(target_alias)'
-    toolexeclibdir="${toolexecdir}"/lib
+    toolexecdir='${exec_prefix}'/'$(target_alias)'
+    toolexeclibdir='${toolexecdir}'/lib
   else
-    toolexecdir="${libdir}"/gcc-lib/'$(target_alias)'
-    toolexeclibdir="${libdir}"
+    toolexecdir='${libdir}'/gcc-lib/'$(target_alias)'
+    toolexeclibdir='${libdir}'
   fi
   if test x"$enable_multi_os_directory" != x"no"; then
     multi_os_directory=`$CC $CFLAGS -print-multi-os-directory`
@@ -377,7 +381,7 @@ if test "x$GCC" = "xyes"; then
   fi
   AC_SUBST(toolexecdir)
 else
-  toolexeclibdir="${libdir}"
+  toolexeclibdir='${libdir}'
 fi
 AC_SUBST(toolexeclibdir)
 
@@ -390,8 +394,10 @@ test -d src || mkdir src
 test -d src/$TARGETDIR || mkdir src/$TARGETDIR
 ], [TARGETDIR="$TARGETDIR"])
 
-AC_CONFIG_LINKS(include/ffitarget.h:src/$TARGETDIR/ffitarget.h)
-
 AC_CONFIG_FILES(include/Makefile include/ffi.h Makefile testsuite/Makefile man/Makefile doc/Makefile libffi.pc)
 
 AC_OUTPUT
+
+# Copy this file instead of using AC_CONFIG_LINK in order to support
+# compiling with MSVC, which won't understand cygwin style symlinks.
+cp ${srcdir}/src/$TARGETDIR/ffitarget.h include/ffitarget.h

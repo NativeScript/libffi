@@ -1,6 +1,6 @@
 /* -----------------------------------------------------------------------
-   ffi64.c - Copyright (c) 2013  The Written Word, Inc.
-             Copyright (c) 2011  Anthony Green
+   ffi64.c - Copyright (c) 2011, 2018  Anthony Green
+             Copyright (c) 2013  The Written Word, Inc.
              Copyright (c) 2008, 2010  Red Hat, Inc.
              Copyright (c) 2002, 2007  Bo Thorsen <bo@suse.de>
 
@@ -537,7 +537,7 @@ ffi_prep_cif_machdep (ffi_cif *cif)
   ffi_type *rtype;
 
 #ifndef __ILP32__
-  if (cif->abi == FFI_EFI64)
+  if (cif->abi == FFI_EFI64 || cif->abi == FFI_GNUW64)
     return ffi_prep_cif_machdep_efi64(cif);
 #endif
   if (cif->abi != FFI_UNIX64)
@@ -829,8 +829,11 @@ void
 ffi_call (ffi_cif *cif, void (*fn)(void), void *rvalue, void **avalue)
 {
 #ifndef __ILP32__
-  if (cif->abi == FFI_EFI64)
-    return ffi_call_efi64(cif, fn, rvalue, avalue);
+  if (cif->abi == FFI_EFI64 || cif->abi == FFI_GNUW64)
+    {
+      ffi_call_efi64(cif, fn, rvalue, avalue);
+      return;
+    }
 #endif
   ffi_call_int (cif, fn, rvalue, avalue, NULL);
 }
@@ -846,8 +849,11 @@ ffi_call_go (ffi_cif *cif, void (*fn)(void), void *rvalue,
 	     void **avalue, void *closure)
 {
 #ifndef __ILP32__
-  if (cif->abi == FFI_EFI64)
-    ffi_call_go_efi64(cif, fn, rvalue, avalue, closure);
+  if (cif->abi == FFI_EFI64 || cif->abi == FFI_GNUW64)
+    {
+      ffi_call_go_efi64(cif, fn, rvalue, avalue, closure);
+      return;
+    }
 #endif
   ffi_call_int (cif, fn, rvalue, avalue, closure);
 }
@@ -884,7 +890,7 @@ ffi_prep_closure_loc (ffi_closure* closure,
   char *tramp = closure->tramp;
 
 #ifndef __ILP32__
-  if (cif->abi == FFI_EFI64)
+  if (cif->abi == FFI_EFI64 || cif->abi == FFI_GNUW64)
     return ffi_prep_closure_loc_efi64(closure, cif, fun, user_data, codeloc);
 #endif
   if (cif->abi != FFI_UNIX64)
@@ -1012,7 +1018,7 @@ ffi_prep_go_closure (ffi_go_closure* closure, ffi_cif* cif,
 		     void (*fun)(ffi_cif*, void*, void**, void*))
 {
 #ifndef __ILP32__
-  if (cif->abi == FFI_EFI64)
+  if (cif->abi == FFI_EFI64 || cif->abi == FFI_GNUW64)
     return ffi_prep_go_closure_efi64(closure, cif, fun);
 #endif
   if (cif->abi != FFI_UNIX64)

@@ -74,8 +74,10 @@ void ffi_type_test(ffi_type *a, char *file, int line);
 #define FFI_ASSERT_VALID_TYPE(x)
 #endif
 
+/* v cast to size_t and aligned up to a multiple of a */
 #define FFI_ALIGN(v, a)  (((((size_t) (v))-1) | ((a)-1))+1)
-#define ALIGN_DOWN(v, a) (((size_t) (v)) & -a)
+/* v cast to size_t and aligned down to a multiple of a */
+#define FFI_ALIGN_DOWN(v, a) (((size_t) (v)) & -a)
 
 /* Perform machine dependent cif processing */
 ffi_status ffi_prep_cif_machdep(ffi_cif *cif);
