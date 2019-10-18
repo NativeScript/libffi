@@ -3,7 +3,7 @@
 	    - Copyright (c) 2008  Red Hat, Inc
 	    - Copyright (c) 2002  Bo Thorsen <bo@suse.de>
 
-   x86-64 Foreign Function Interface 
+   x86-64 Foreign Function Interface
 
    Permission is hereby granted, free of charge, to any person obtaining
    a copy of this software and associated documentation files (the
@@ -27,7 +27,7 @@
    ----------------------------------------------------------------------- */
 
 #ifdef __x86_64__
-#define LIBFFI_ASM	
+#define LIBFFI_ASM
 #include <fficonfig.h>
 #include <ffi.h>
 #include "internal64.h"
@@ -172,11 +172,21 @@ E(L(store_table), UNIX64_RET_ST_XMM0_RAX)
 E(L(store_table), UNIX64_RET_ST_RAX_XMM0)
 	movq	%xmm0, 8(%rsi)
 	jmp	L(s2)
-E(L(store_table), UNIX64_RET_ST_XMM0_XMM1)
+E(L(store_table), UNIX64_RET_ST_XMM0_XMM1_64)
 	movq	%xmm1, 8(%rsi)
 	jmp	L(s3)
+E(L(store_table), UNIX64_RET_ST_XMM0_XMM1_128)
+	movdqu    %xmm1, 16(%rdi)
+	jmp    L(s4)
+E(L(store_table), UNIX64_RET_ST_XMM0)
+	movdqu    %xmm0, (%rsi)
+	jmp    L(s3)
 E(L(store_table), UNIX64_RET_ST_RAX_RDX)
 	movq	%rdx, 8(%rsi)
+	jmp    L(s2)
+E(L(store_table), UNIX64_RET_X86_ST0)
+	fstpl   16(%rdi)
+	jmp     L(s5)
 L(s2):
 	movq	%rax, (%rsi)
 	shrl	$UNIX64_SIZE_SHIFT, %ecx
@@ -187,6 +197,13 @@ L(s3):
 	movq	%xmm0, (%rsi)
 	shrl	$UNIX64_SIZE_SHIFT, %ecx
 	rep movsb
+	ret
+L(s4):
+	movdqu    %xmm0, (%rdi)
+	ret
+L(s5):
+	movq    %xmm1, 8(%rdi)
+	movq    %xmm0, (%rdi)
 	ret
 
 L(sa):	call	PLT(C(abort))
@@ -334,17 +351,29 @@ E(L(load_table), UNIX64_RET_ST_XMM0_RAX)
 E(L(load_table), UNIX64_RET_ST_RAX_XMM0)
 	movq	8(%rsi), %xmm0
 	jmp	L(l2)
-E(L(load_table), UNIX64_RET_ST_XMM0_XMM1)
+E(L(load_table), UNIX64_RET_ST_XMM0_XMM1_64)
 	movq	8(%rsi), %xmm1
 	jmp	L(l3)
+E(L(load_table), UNIX64_RET_ST_XMM0_XMM1_128)
+	movq	16(%rsi), %xmm1
+	jmp	L(l4)
+E(L(load_table), UNIX64_RET_ST_XMM0)
+	jmp	L(l4)
 E(L(load_table), UNIX64_RET_ST_RAX_RDX)
 	movq	8(%rsi), %rdx
+    jmp    L(l2)
+E(L(load_table), UNIX64_RET_X86_ST0)
+	movdqa  16(%rsi), %xmm1
+	jmp     L(l4)
 L(l2):
 	movq	(%rsi), %rax
 	ret
 	.balign	8
 L(l3):
 	movq	(%rsi), %xmm0
+	ret
+L(l4):
+	movdqa  (%rsi), %xmm0
 	ret
 
 L(la):	call	PLT(C(abort))

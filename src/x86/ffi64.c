@@ -33,6 +33,7 @@
 #include <stdlib.h>
 #include <stdarg.h>
 #include <stdint.h>
+#include <stdbool.h>
 #include "internal64.h"
 
 #ifdef __x86_64__
@@ -86,10 +87,7 @@ enum x86_64_reg_class
   {
     X86_64_NO_CLASS,
     X86_64_INTEGER_CLASS,
-    X86_64_INTEGERSI_CLASS,
     X86_64_SSE_CLASS,
-    X86_64_SSESF_CLASS,
-    X86_64_SSEDF_CLASS,
     X86_64_SSEUP_CLASS,
     X86_64_X87_CLASS,
     X86_64_X87UP_CLASS,
@@ -101,6 +99,143 @@ enum x86_64_reg_class
 
 #define SSE_CLASS_P(X)	((X) >= X86_64_SSE_CLASS && X <= X86_64_SSEUP_CLASS)
 
+/* A subroutine of is_vfp_type. Given a structure type,
+ return the type code of the first non - structure element.Recurse
+ for structure elements.
+ Return - 1
+ if the structure is in fact empty, i.e.no nested elements.*/
+
+static int
+is_hfa0(const ffi_type* ty) {
+  ffi_type** elements = ty->elements;
+  int i, ret = -1;
+
+  if (elements != NULL)
+    for (i = 0; elements[i]; ++i) {
+      ret = elements[i]->type;
+      if (ret == FFI_TYPE_STRUCT || ret == FFI_TYPE_EXT_VECTOR || ret == FFI_TYPE_COMPLEX) {
+        ret = is_hfa0(elements[i]);
+        if (ret < 0)
+          continue;
+      }
+      break;
+    }
+
+  return ret;
+}
+
+/* A subroutine of is_vfp_type. Given a structure type, return true if all
+ of the non-structure elements are the same as CANDIDATE.  */
+
+static int
+is_hfa1(const ffi_type* ty, int candidate) {
+  ffi_type** elements = ty->elements;
+  int i;
+
+  if (elements != NULL)
+    for (i = 0; elements[i]; ++i) {
+      int t = elements[i]->type;
+      if (t == FFI_TYPE_STRUCT || t == FFI_TYPE_COMPLEX || t == FFI_TYPE_EXT_VECTOR) {
+        if (!is_hfa1(elements[i], candidate))
+          return 0;
+      } else if (t != candidate)
+        return 0;
+    }
+
+  return 1;
+}
+
+static size_t is_simd(const ffi_type* ty) // return 0 if no SIMD elements
+{
+  if (ty->type == FFI_TYPE_EXT_VECTOR || ty->type == FFI_TYPE_COMPLEX) {
+    return ty->size;
+  }
+  ffi_type ** elements = ty->elements;
+  int i;
+
+  if (elements != NULL) {
+    for (i = 0; elements[i]; ++i) {
+      int element_type = elements[i]->type;
+      if (element_type == FFI_TYPE_STRUCT || element_type == FFI_TYPE_COMPLEX || element_type == FFI_TYPE_EXT_VECTOR) {
+        return is_simd(elements[i]);
+      }
+    }
+  }
+
+  return 0;
+
+}
+
+int num_registers(ffi_type* type) {
+  int candidate;
+  size_t size, ele_count, simd_size;
+
+  ffi_type** elements = type->elements;
+  size = type->size;
+  candidate = type->elements[0]->type;
+  simd_size = is_simd(type);
+  if (candidate == FFI_TYPE_STRUCT || candidate == FFI_TYPE_COMPLEX || candidate == FFI_TYPE_EXT_VECTOR) {
+    for (int i = 0;; ++i) {
+      candidate = is_hfa0(elements[i]);
+      if (candidate >= 0)
+        break;
+    }
+  }
+
+  switch (candidate) {
+    case FFI_TYPE_FLOAT:
+      ele_count = size / sizeof(float);
+      if (size != ele_count * sizeof(float))
+        return 0;
+      break;
+    case FFI_TYPE_DOUBLE:
+      ele_count = size / sizeof(double);
+      if (size != ele_count * sizeof(double))
+        return 0;
+      break;
+    case FFI_TYPE_LONGDOUBLE:
+      ele_count = size / sizeof(long double);
+      if (size != ele_count * sizeof(long double))
+        return 0;
+      break;
+    default:
+        return 0;
+  }
+  if ((ele_count > 4 && !simd_size) || (simd_size && ele_count > 16))
+    return 0;
+
+  /* Finally, make sure that all scalar elements are the same type.  */
+  for (int i = 0; elements[i]; ++i) {
+    int t = elements[i]->type;
+    if (t == FFI_TYPE_STRUCT || t == FFI_TYPE_COMPLEX || t == FFI_TYPE_EXT_VECTOR) {
+      if (!is_hfa1(elements[i], candidate))
+        return 0;
+    } else if (t != candidate)
+        return 0;
+  }
+
+  if (simd_size) {
+	/* Third element in double3 vectors is in ST0.  */
+    if (candidate == FFI_TYPE_DOUBLE && ele_count == 3) {
+      return 3;
+    }
+    size_t regSize = simd_size > 16 ? 16 : simd_size;
+    return (int) size / regSize + (size % regSize ? 1 : 0);
+  }
+  return 0;
+}
+
+static enum x86_64_reg_class normalize_sse_class(enum x86_64_reg_class class, int byte_offset, _Bool is_vector) {
+  if (SSE_CLASS_P(class)) {
+    if (is_vector) {
+      return byte_offset >= 8 ? X86_64_SSEUP_CLASS : X86_64_SSE_CLASS;
+    }
+    return X86_64_SSE_CLASS;
+  }
+
+  return class;
+}
+
 /* x86-64 register passing implementation.  See x86-64 ABI for details.  Goal
    of this code is to classify each 8bytes of incoming argument by the register
    class and assign registers accordingly.  */
@@ -109,30 +244,26 @@ enum x86_64_reg_class
    See the x86-64 PS ABI for details.  */
 
 static enum x86_64_reg_class
-merge_classes (enum x86_64_reg_class class1, enum x86_64_reg_class class2)
+merge_classes (enum x86_64_reg_class class1, enum x86_64_reg_class class2, int byte_offset, _Bool is_vector)
 {
   /* Rule #1: If both classes are equal, this is the resulting class.  */
   if (class1 == class2)
-    return class1;
+    return normalize_sse_class(class1, byte_offset, is_vector);
 
   /* Rule #2: If one of the classes is NO_CLASS, the resulting class is
      the other class.  */
   if (class1 == X86_64_NO_CLASS)
-    return class2;
+    return normalize_sse_class(class2, byte_offset, is_vector);
   if (class2 == X86_64_NO_CLASS)
-    return class1;
+    return normalize_sse_class(class1, byte_offset, is_vector);
 
   /* Rule #3: If one of the classes is MEMORY, the result is MEMORY.  */
   if (class1 == X86_64_MEMORY_CLASS || class2 == X86_64_MEMORY_CLASS)
     return X86_64_MEMORY_CLASS;
 
   /* Rule #4: If one of the classes is INTEGER, the result is INTEGER.  */
-  if ((class1 == X86_64_INTEGERSI_CLASS && class2 == X86_64_SSESF_CLASS)
-      || (class2 == X86_64_INTEGERSI_CLASS && class1 == X86_64_SSESF_CLASS))
-    return X86_64_INTEGERSI_CLASS;
-  if (class1 == X86_64_INTEGER_CLASS || class1 == X86_64_INTEGERSI_CLASS
-      || class2 == X86_64_INTEGER_CLASS || class2 == X86_64_INTEGERSI_CLASS)
-    return X86_64_INTEGER_CLASS;
+  if (class1 == X86_64_INTEGER_CLASS || class2 == X86_64_INTEGER_CLASS)
+      return X86_64_INTEGER_CLASS;
 
   /* Rule #5: If one of the classes is X87, X87UP, or COMPLEX_X87 class,
      MEMORY is used.  */
@@ -144,8 +275,7 @@ merge_classes (enum x86_64_reg_class class1, enum x86_64_reg_class class2)
       || class2 == X86_64_COMPLEX_X87_CLASS)
     return X86_64_MEMORY_CLASS;
 
-  /* Rule #6: Otherwise class SSE is used.  */
-  return X86_64_SSE_CLASS;
+  return byte_offset >= 8 ? X86_64_SSEUP_CLASS : X86_64_SSE_CLASS;
 }
 
 /* Classify the argument of type TYPE and mode MODE.
@@ -158,7 +288,7 @@ merge_classes (enum x86_64_reg_class class1, enum x86_64_reg_class class2)
 */
 static size_t
 classify_argument (ffi_type *type, enum x86_64_reg_class classes[],
-		   size_t byte_offset)
+		   size_t byte_offset, _Bool is_vector, _Bool is_ret)
 {
   switch (type->type)
     {
@@ -177,7 +307,7 @@ classify_argument (ffi_type *type, enum x86_64_reg_class classes[],
 
 	if (size <= 4)
 	  {
-	    classes[0] = X86_64_INTEGERSI_CLASS;
+	    classes[0] = X86_64_INTEGER_CLASS;
 	    return 1;
 	  }
 	else if (size <= 8)
@@ -188,7 +318,7 @@ classify_argument (ffi_type *type, enum x86_64_reg_class classes[],
 	else if (size <= 12)
 	  {
 	    classes[0] = X86_64_INTEGER_CLASS;
-	    classes[1] = X86_64_INTEGERSI_CLASS;
+	    classes[1] = X86_64_INTEGER_CLASS;
 	    return 2;
 	  }
 	else if (size <= 16)
@@ -200,13 +330,10 @@ classify_argument (ffi_type *type, enum x86_64_reg_class classes[],
 	  FFI_ASSERT (0);
       }
     case FFI_TYPE_FLOAT:
-      if (!(byte_offset % 8))
-	classes[0] = X86_64_SSESF_CLASS;
-      else
-	classes[0] = X86_64_SSE_CLASS;
+      classes[0] = X86_64_SSE_CLASS;
       return 1;
     case FFI_TYPE_DOUBLE:
-      classes[0] = X86_64_SSEDF_CLASS;
+      classes[0] = X86_64_SSE_CLASS;
       return 1;
 #if FFI_TYPE_LONGDOUBLE != FFI_TYPE_DOUBLE
     case FFI_TYPE_LONGDOUBLE:
@@ -215,6 +342,14 @@ classify_argument (ffi_type *type, enum x86_64_reg_class classes[],
       return 2;
 #endif
     case FFI_TYPE_STRUCT:
+      // If the size of an object is larger than two eightbytes, or in C++, is a nonPOD
+      // structure or union type, or contains unaligned fields, it has class
+      // MEMORY.
+      if (type->size > 16) {
+          return 0;
+      }
+      // fallthrough case
+    case FFI_TYPE_EXT_VECTOR:
       {
 	const size_t UNITS_PER_WORD = 8;
 	size_t words = (type->size + UNITS_PER_WORD - 1) / UNITS_PER_WORD;
@@ -222,9 +357,14 @@ classify_argument (ffi_type *type, enum x86_64_reg_class classes[],
 	unsigned int i;
 	enum x86_64_reg_class subclasses[MAX_CLASSES];
 
-	/* If the struct is larger than 32 bytes, pass it on the stack.  */
+    /* If the struct is larger than 32 bytes, pass it on the stack.  */
 	if (type->size > 32)
 	  return 0;
+
+    // Observation: simd_double3 arguments are passed on stack, while
+    // returned simd_double3 objects are in registers
+    if (type->size > 16 && !is_ret)
+        return 0;
 
 	for (i = 0; i < words; i++)
 	  classes[i] = X86_64_NO_CLASS;
@@ -245,14 +385,14 @@ classify_argument (ffi_type *type, enum x86_64_reg_class classes[],
 
 	    byte_offset = FFI_ALIGN (byte_offset, (*ptr)->alignment);
 
-	    num = classify_argument (*ptr, subclasses, byte_offset % 8);
+	    num = classify_argument (*ptr, subclasses, byte_offset % 8, is_vector, is_ret);
 	    if (num == 0)
 	      return 0;
 	    for (i = 0; i < num; i++)
 	      {
 		size_t pos = byte_offset / 8;
 		classes[i + pos] =
-		  merge_classes (subclasses[i], classes[i + pos]);
+		  merge_classes (subclasses[i], classes[i + pos], (int)byte_offset, is_vector);
 	      }
 
 	    byte_offset += (*ptr)->size;
@@ -321,14 +461,9 @@ classify_argument (ffi_type *type, enum x86_64_reg_class classes[],
 
 	  case FFI_TYPE_FLOAT:
 	    classes[0] = X86_64_SSE_CLASS;
-	    if (byte_offset % 8)
-	      {
-		classes[1] = X86_64_SSESF_CLASS;
-		return 2;
-	      }
-	    return 1;
+      return 1;
 	  case FFI_TYPE_DOUBLE:
-	    classes[0] = classes[1] = X86_64_SSEDF_CLASS;
+	    classes[0] = classes[1] = X86_64_SSE_CLASS;
 	    return 2;
 #if FFI_TYPE_LONGDOUBLE != FFI_TYPE_DOUBLE
 	  case FFI_TYPE_LONGDOUBLE:
@@ -347,13 +482,14 @@ classify_argument (ffi_type *type, enum x86_64_reg_class classes[],
 
 static size_t
 examine_argument (ffi_type *type, enum x86_64_reg_class classes[MAX_CLASSES],
-		  _Bool in_return, int *pngpr, int *pnsse)
+		  _Bool in_return, int *pngpr, int *pnsse, _Bool is_ret)
 {
   size_t n;
   unsigned int i;
   int ngpr, nsse;
+  _Bool is_vector = type->type == FFI_TYPE_EXT_VECTOR;
 
-  n = classify_argument (type, classes, 0);
+  n = classify_argument (type, classes, 0, is_vector, is_ret);
   if (n == 0)
     return 0;
 
@@ -362,16 +498,13 @@ examine_argument (ffi_type *type, enum x86_64_reg_class classes[MAX_CLASSES],
     switch (classes[i])
       {
       case X86_64_INTEGER_CLASS:
-      case X86_64_INTEGERSI_CLASS:
 	ngpr++;
 	break;
       case X86_64_SSE_CLASS:
-      case X86_64_SSESF_CLASS:
-      case X86_64_SSEDF_CLASS:
+      case X86_64_SSEUP_CLASS:
 	nsse++;
 	break;
       case X86_64_NO_CLASS:
-      case X86_64_SSEUP_CLASS:
 	break;
       case X86_64_X87_CLASS:
       case X86_64_X87UP_CLASS:
@@ -457,7 +590,8 @@ ffi_prep_cif_machdep (ffi_cif *cif)
       break;
 #endif
     case FFI_TYPE_STRUCT:
-      n = examine_argument (cif->rtype, classes, 1, &ngpr, &nsse);
+    case FFI_TYPE_EXT_VECTOR:
+      n = examine_argument (cif->rtype, classes, 1, &ngpr, &nsse, true);
       if (n == 0)
 	{
 	  /* The return value is passed in memory.  A pointer to that
@@ -476,15 +610,28 @@ ffi_prep_cif_machdep (ffi_cif *cif)
 	    flags = sse0 ? UNIX64_RET_XMM64 : UNIX64_RET_INT64;
 	  else
 	    {
-	      _Bool sse1 = n == 2 && SSE_CLASS_P (classes[1]);
-	      if (sse0 && sse1)
-		flags = UNIX64_RET_ST_XMM0_XMM1;
-	      else if (sse0)
-		flags = UNIX64_RET_ST_XMM0_RAX;
-	      else if (sse1)
-		flags = UNIX64_RET_ST_RAX_XMM0;
-	      else
-		flags = UNIX64_RET_ST_RAX_RDX;
+	    _Bool sse1 = n == 2 && SSE_CLASS_P (classes[1]);
+	    if (sse0) {
+          int num_regs = num_registers(cif->rtype);
+          if (num_regs == 1) {
+            flags = UNIX64_RET_ST_XMM0;
+          } else if (num_regs == 2) {
+			/* matrix_float2x2 needs all 128 bits of the registers */
+            flags = rtype_size > 16 ? UNIX64_RET_ST_XMM0_XMM1_128 : UNIX64_RET_ST_XMM0_XMM1_64;
+          } else if (num_regs == 3) {
+			/* third element in double3 vector is in ST0 */
+            flags = UNIX64_RET_X86_ST0;
+          } else if (sse1) {
+			/* if num_regs == 0 && sse0 && sse1 => we have a struct with size < 16 */
+            flags = UNIX64_RET_ST_XMM0_XMM1_64;
+          } else {
+            flags = UNIX64_RET_ST_XMM0_RAX;
+          }
+        } else if (sse1) {
+          flags = UNIX64_RET_ST_RAX_XMM0;
+        } else {
+          flags = UNIX64_RET_ST_RAX_RDX;
+        }
 	      flags |= rtype_size << UNIX64_SIZE_SHIFT;
 	    }
 	}
@@ -507,7 +654,7 @@ ffi_prep_cif_machdep (ffi_cif *cif)
 	  flags = UNIX64_RET_XMM64;
 	  break;
 	case FFI_TYPE_DOUBLE:
-	  flags = UNIX64_RET_ST_XMM0_XMM1 | (16 << UNIX64_SIZE_SHIFT);
+	  flags = UNIX64_RET_ST_XMM0_XMM1_64 | (16 << UNIX64_SIZE_SHIFT);
 	  break;
 #if FFI_TYPE_LONGDOUBLE != FFI_TYPE_DOUBLE
 	case FFI_TYPE_LONGDOUBLE:
@@ -527,7 +674,7 @@ ffi_prep_cif_machdep (ffi_cif *cif)
      not, add it's size to the stack byte count.  */
   for (bytes = 0, i = 0, avn = cif->nargs; i < avn; i++)
     {
-      if (examine_argument (cif->arg_types[i], classes, 0, &ngpr, &nsse) == 0
+      if (examine_argument (cif->arg_types[i], classes, 0, &ngpr, &nsse, false) == 0
 	  || gprcount + ngpr > MAX_GPR_REGS
 	  || ssecount + nsse > MAX_SSE_REGS)
 	{
@@ -599,7 +746,7 @@ ffi_call_int (ffi_cif *cif, void (*fn)(void), void *rvalue,
     {
       size_t n, size = arg_types[i]->size;
 
-      n = examine_argument (arg_types[i], classes, 0, &ngpr, &nsse);
+      n = examine_argument (arg_types[i], classes, 0, &ngpr, &nsse, false);
       if (n == 0
 	  || gprcount + ngpr > MAX_GPR_REGS
 	  || ssecount + nsse > MAX_SSE_REGS)
@@ -626,10 +773,8 @@ ffi_call_int (ffi_cif *cif, void (*fn)(void), void *rvalue,
 	      switch (classes[j])
 		{
 		case X86_64_NO_CLASS:
-		case X86_64_SSEUP_CLASS:
 		  break;
 		case X86_64_INTEGER_CLASS:
-		case X86_64_INTEGERSI_CLASS:
 		  /* Sign-extend integer arguments passed in general
 		     purpose registers, to cope with the fact that
 		     LLVM incorrectly assumes that this will be done
@@ -649,14 +794,21 @@ ffi_call_int (ffi_cif *cif, void (*fn)(void), void *rvalue,
 		      reg_args->gpr[gprcount] = 0;
 		      memcpy (&reg_args->gpr[gprcount], a, size);
 		    }
-		  gprcount++;
-		  break;
+		    gprcount++;
+		    break;
 		case X86_64_SSE_CLASS:
-		case X86_64_SSEDF_CLASS:
-		  memcpy (&reg_args->sse[ssecount++].i64, a, sizeof(UINT64));
-		  break;
-		case X86_64_SSESF_CLASS:
-		  memcpy (&reg_args->sse[ssecount++].i32, a, sizeof(UINT32));
+          if (size > 4) {
+            memcpy (&reg_args->sse[ssecount++].i64, a, sizeof(UINT64));
+          } else {
+            memcpy (&reg_args->sse[ssecount++].i32, a, sizeof(UINT32));
+          }
+          break;
+		case X86_64_SSEUP_CLASS:
+          if (j%2) {
+            memcpy (&reg_args->sse[ssecount-1].i64 + 1, a, sizeof(UINT64));
+          } else {
+            memcpy (&reg_args->sse[ssecount++].i128, a, sizeof(UINT64));
+          }
 		  break;
 		default:
 		  abort();
@@ -796,7 +948,7 @@ ffi_closure_unix64_inner(ffi_cif *cif,
       enum x86_64_reg_class classes[MAX_CLASSES];
       size_t n;
 
-      n = examine_argument (arg_types[i], classes, 0, &ngpr, &nsse);
+      n = examine_argument (arg_types[i], classes, 0, &ngpr, &nsse, false);
       if (n == 0
 	  || gprcount + ngpr > MAX_GPR_REGS
 	  || ssecount + nsse > MAX_SSE_REGS)
